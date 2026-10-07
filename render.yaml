@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: portfolio-radar
+    runtime: python
+    plan: starter
+    region: frankfurt
+    buildCommand: python -m compileall -q server.py
+    startCommand: python server.py
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORTFOLIO_RADAR_HOST
+        value: 0.0.0.0
+      - key: PORTFOLIO_RADAR_SECURE_COOKIES
+        value: "true"
+      - key: PORTFOLIO_RADAR_PASSWORD
+        sync: false
+      - key: PORTFOLIO_RADAR_STATE_PATH
+        value: /var/data/user_state.json
+      - key: TZ
+        value: Europe/Copenhagen
+    disk:
+      name: portfolio-radar-data
+      mountPath: /var/data
+      sizeGB: 1

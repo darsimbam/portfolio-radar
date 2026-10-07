@@ -1,0 +1,115 @@
+{
+  "asOf": "2026-10-07T16:30:00Z",
+  "dashboard": {
+    "priorityCount": 3,
+    "freshnessLabel": "Fictional sample data",
+    "freshnessDetail": "Seeded for the demo · not connected to a live feed",
+    "monitoringStatus": "Paused · local demo",
+    "weeklyReview": "Friday, 09 Oct",
+    "researchAgent": "Single research agent · simulated",
+    "priorities": [
+      {"companyId": "NOVA", "label": "Review margin inflection", "detail": "Next update: fictional Q3 results"},
+      {"companyId": "LUMA", "label": "Validate retention assumptions", "detail": "Evidence quality: medium"},
+      {"companyId": "ORBT", "label": "Revisit customer concentration", "detail": "Thesis checkpoint overdue"}
+    ]
+  },
+  "events": [
+    {"date": "09 Oct", "title": "Weekly portfolio review", "detail": "Review notes and open questions", "kind": "Review"},
+    {"date": "14 Oct", "title": "NOVA · Q3 results (fictional)", "detail": "Sample calendar event · verify before use", "kind": "Earnings"},
+    {"date": "21 Oct", "title": "ORBT · thesis checkpoint", "detail": "Sample reminder · no monitoring run scheduled", "kind": "Checkpoint"}
+  ],
+  "companies": [
+    {
+      "id": "NOVA",
+      "name": "Novaline Systems",
+      "ticker": "NOVA",
+      "sector": "Enterprise software",
+      "status": "Watching",
+      "priority": "High",
+      "signal": "Margin inflection",
+      "signalTone": "positive",
+      "finding": "Recurring revenue is growing while support costs appear to be levelling off in the fictional quarterly series.",
+      "thesis": "If workflow adoption continues across mid-market customers, Novaline may compound recurring revenue while expanding operating margins.",
+      "metrics": [
+        {"label": "Revenue growth", "value": "18%", "period": "FY sample", "trend": "up"},
+        {"label": "Gross margin", "value": "71%", "period": "FY sample", "trend": "up"},
+        {"label": "Net retention", "value": "112%", "period": "FY sample", "trend": "flat"}
+      ],
+      "risks": ["Renewals may be concentrated in a few large accounts.", "Product-led adoption is an assumption, not verified customer evidence."],
+      "evidence": [
+        {"type": "Fact · fictional", "text": "Sample quarterly dataset shows revenue up 18% year over year.", "source": "Local demo seed · invented dataset", "timestamp": "2026-10-07T16:30:00Z"},
+        {"type": "Assumption", "text": "Customer support costs stabilise as the install base matures.", "source": "Analyst assumption · unverified", "timestamp": "2026-10-07T16:30:00Z"},
+        {"type": "Interpretation", "text": "Margin expansion could follow if renewals remain healthy.", "source": "Simulated research summary · not live research", "timestamp": "2026-10-07T16:30:00Z"}
+      ],
+      "history": [
+        {"date": "07 Oct 2026", "change": "Added the margin inflection question to the monitoring priorities.", "by": "You"},
+        {"date": "30 Sep 2026", "change": "Thesis narrowed to mid-market workflow adoption.", "by": "You"}
+      ]
+    },
+    {
+      "id": "LUMA",
+      "name": "Lumaforge Health",
+      "ticker": "LUMA",
+      "sector": "Healthcare technology",
+      "status": "Researching",
+      "priority": "Medium",
+      "signal": "Retention needs validation",
+      "signalTone": "neutral",
+      "finding": "The fictional sample shows customer growth, but cohort-level retention evidence is still missing.",
+      "thesis": "A trusted clinical workflow could create durable demand if measurable customer outcomes and renewals support the value proposition.",
+      "metrics": [
+        {"label": "Customer growth", "value": "24%", "period": "FY sample", "trend": "up"},
+        {"label": "Gross margin", "value": "64%", "period": "FY sample", "trend": "flat"},
+        {"label": "Net retention", "value": "Not provided", "period": "Needs evidence", "trend": "unknown"}
+      ],
+      "risks": ["No cohort-level renewal data in this sample.", "Reimbursement and procurement cycles could slow adoption."],
+      "evidence": [
+        {"type": "Fact · fictional", "text": "Sample customer count grew 24% year over year.", "source": "Local demo seed · invented dataset", "timestamp": "2026-10-07T16:30:00Z"},
+        {"type": "Assumption", "text": "Clinical outcomes will translate into renewals.", "source": "Analyst assumption · unverified", "timestamp": "2026-10-07T16:30:00Z"},
+        {"type": "Interpretation", "text": "Retention evidence is the key unresolved diligence item.", "source": "Simulated research summary · not live research", "timestamp": "2026-10-07T16:30:00Z"}
+      ],
+      "history": [
+        {"date": "06 Oct 2026", "change": "Opened a retention validation question.", "by": "You"},
+        {"date": "25 Sep 2026", "change": "Added Lumaforge to discovery.", "by": "You"}
+      ]
+    },
+    {
+      "id": "ORBT",
+      "name": "Orbit Materials",
+      "ticker": "ORBT",
+      "sector": "Industrial materials",
+      "status": "Needs review",
+      "priority": "High",
+      "signal": "Concentration risk",
+      "signalTone": "warning",
+      "finding": "A fictional top-customer exposure estimate is high enough to challenge the durability of the growth thesis.",
+      "thesis": "Specialty materials may benefit from process qualification barriers, provided customer concentration declines as capacity scales.",
+      "metrics": [
+        {"label": "Revenue growth", "value": "11%", "period": "FY sample", "trend": "flat"},
+        {"label": "Gross margin", "value": "38%", "period": "FY sample", "trend": "down"},
+        {"label": "Largest customer", "value": "31%", "period": "FY sample", "trend": "warning"}
+      ],
+      "risks": ["Largest-customer exposure could cause volatile demand.", "Lower sample gross margin may reflect input-cost pressure."],
+      "evidence": [
+        {"type": "Fact · fictional", "text": "Invented sample estimates the largest customer at 31% of revenue.", "source": "Local demo seed · invented dataset", "timestamp": "2026-10-07T16:30:00Z"},
+        {"type": "Assumption", "text": "New customer qualification reduces concentration over time.", "source": "Analyst assumption · unverified", "timestamp": "2026-10-07T16:30:00Z"},
+        {"type": "Interpretation", "text": "Concentration and margin pressure merit a thesis checkpoint.", "source": "Simulated research summary · not live research", "timestamp": "2026-10-07T16:30:00Z"}
+      ],
+      "history": [
+        {"date": "02 Oct 2026", "change": "Flagged customer concentration for review.", "by": "You"},
+        {"date": "18 Sep 2026", "change": "Created initial tracker with a capacity-scaling thesis.", "by": "You"}
+      ]
+    }
+  ],
+  "discoveries": [
+    {"companyId": "NOVA", "category": "Earnings", "confidence": "Medium", "finding": "Sample revenue and gross margin both trend upward; renewal quality remains the key check."},
+    {"companyId": "LUMA", "category": "Discovery", "confidence": "Low", "finding": "Customer growth looks promising in the fictional series, with retention evidence still absent."},
+    {"companyId": "ORBT", "category": "Deterioration", "confidence": "Medium", "finding": "Sample customer concentration and gross-margin pressure may weaken the scaling thesis."}
+  ],
+  "templates": [
+    {"id": "discovery", "name": "Discovery brief", "description": "Initial opportunity screen", "sections": ["Question to answer", "Facts & sources", "Assumptions", "Interpretation", "Risks & disconfirming evidence", "Next research step"]},
+    {"id": "earnings", "name": "Earnings review", "description": "Quarterly results and guidance", "sections": ["Period & source timestamp", "Reported facts", "Versus prior expectations", "Management commentary", "Assumptions to revisit", "Thesis impact", "Follow-up questions"]},
+    {"id": "deterioration", "name": "Deterioration alert", "description": "Potential thesis or data-quality change", "sections": ["Observed change", "Source & timestamp", "Fact versus interpretation", "Severity & confidence", "Alternative explanations", "Escalation owner", "Next checkpoint"]},
+    {"id": "weekly", "name": "Weekly review", "description": "Portfolio-wide monitoring review", "sections": ["Top priorities", "Freshness & coverage", "New evidence", "Open risks", "Decisions to revisit", "Upcoming events", "Owners & next actions"]}
+  ]
+}

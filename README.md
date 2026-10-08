@@ -1,6 +1,24 @@
 # Portfolio Radar
 
-A private, dependency-free local investment research workspace. Start the server with `python server.py` and open <http://127.0.0.1:8000>. Press Ctrl+C to stop it.
+A private investment research workspace using clearly labelled fictional seed data. The Streamlit interface is the recommended way to run and deploy the app. The original dependency-free HTTP interface remains available with `python server.py` at <http://127.0.0.1:8000>.
+
+## Run the Streamlit app locally
+
+Install the interface dependency and start the app:
+
+```powershell
+python -m pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
+
+The Streamlit app requires `PORTFOLIO_RADAR_PASSWORD` (at least 12 characters) from the environment or Streamlit secrets. In PowerShell, set it in the same terminal session before running Streamlit:
+
+```powershell
+$env:PORTFOLIO_RADAR_PASSWORD = "use-a-unique-password-here"
+streamlit run streamlit_app.py
+```
+
+Do not put real passwords or API keys in source control or chat. Locally saved notes and watchlists are stored in `data/user_state.json`.
 
 ## What works
 
@@ -34,13 +52,28 @@ This app is local-first and binds only to `127.0.0.1` by default. A single-user 
 - Keep this Python server bound to loopback (`PORTFOLIO_RADAR_HOST=127.0.0.1`) and place it behind a TLS reverse proxy on the selected host. A direct non-loopback bind requires a strong local password and secure cookies, but the app itself does not provide TLS. Never expose its development HTTP server directly to the public internet.
 - Baseline CSP, anti-framing, MIME-sniffing and referrer headers are set by the app. Configure HTTPS/HSTS at the TLS proxy, backups, host updates/firewall, monitoring and secure environment-variable handling before launch.
 
-No cloud deployment has been performed yet. This remains a single-user service; it does not provide multi-user accounts, persistent session storage, database backups or production operations tooling. Treat this hardening as a starting point, not a claim of deployment readiness.
+The existing Render deployment serves the original HTTP interface. The new Streamlit deployment is a separate service. This remains a single-user app; it does not provide multi-user accounts, persistent session storage, database backups or production operations tooling. Treat this hardening as a starting point, not a claim of production readiness.
 
-## Render private deployment preparation
+## Deploy the Streamlit app
 
-`render.yaml` prepares a Render web service in Frankfurt with HTTPS cookies, a single-user password gate, an unauthenticated `/healthz` check, and a 1 GB persistent disk for `data/user_state.json`. The app binds to Render's injected `PORT`; local runs still default to `127.0.0.1:8000`. `TZ=Europe/Copenhagen` keeps the opt-in 09:00 monitoring schedule aligned with Copenhagen time (including daylight-saving changes). The `starter` instance and persistent disk are paid Render resources—review current pricing before creating them.
+The Streamlit entry point is `streamlit_app.py`; `requirements.txt` installs Streamlit. To deploy through Streamlit Community Cloud, connect the GitHub repository, select the `main` branch and `streamlit_app.py`, and configure secrets in the app's settings:
 
-To deploy, push this folder to a private GitHub repository and create a Render Blueprint from it. During setup, enter a unique `PORTFOLIO_RADAR_PASSWORD` of at least 12 characters into Render's secret prompt; never put it in this repository or chat. After creation, verify the generated HTTPS URL, login, note/watchlist persistence across a service restart, and sign-out. `OPENAI_API_KEY` is optional and should only be added through Render's secret manager if you explicitly want live OpenAI analysis; otherwise research stays fictional/demo-only. No Render service has been created from this workspace.
+```toml
+PORTFOLIO_RADAR_PASSWORD = "choose-a-unique-password-of-at-least-12-characters"
+# Optional: enable manually triggered OpenAI analysis and opt-in monitoring.
+# OPENAI_API_KEY = "..."
+# OPENAI_MODEL = "gpt-4.1-mini"
+```
+
+Set `PORTFOLIO_RADAR_PASSWORD` before sharing the deployment. Keep the app's platform visibility/access controls appropriately restricted as well; the in-app password is an additional gate, not a replacement for platform access controls. Never put credentials in GitHub source files or chat.
+
+The Streamlit app saves notes and watchlists to `data/user_state.json`. Streamlit Community Cloud does not provide durable local-file storage as an application database; local state can be lost when the app restarts, rebuilds, or is moved. Use a persistent database and backups before relying on saved research. The opt-in daily scheduler runs only while the app process is alive and is not a guaranteed hosted scheduler. Configure a dedicated persistent database and scheduled job for reliable private deployment.
+
+After deployment, verify the sign-in gate, all five workspace sections, notes/watchlist behavior, and platform access restrictions. Seed companies, metrics, events, evidence and findings remain fictional. OpenAI analysis is optional and only runs after explicit user action or opt-in monitoring.
+
+## Existing Render deployment
+
+The earlier Render service is configured to start the original HTTP interface with `python server.py`; it does not automatically serve the Streamlit interface. The existing service configuration and state path are in `render.yaml`. To deploy the new interface on Streamlit Community Cloud, use the Streamlit setup above rather than changing Render's start command. The standalone HTTP interface and its tests remain available for local use and as a backend reference.
 
 `BrokerDataProvider` in `server.py` remains an unconfigured seam and fails explicitly. The scheduler is opt-in, local-process-bound, and records run state, time and per-company failures. Keep calculations in explicit tested tools and label any future data with its actual source and retrieval timestamp.
 
@@ -48,4 +81,4 @@ User notes and watchlists are written as plain JSON to `data/user_state.json`; a
 
 ## Tests
 
-Run `python -m unittest discover -s tests -v` using Python 3.10 or newer. The app itself uses only the Python standard library.
+Run `python -m unittest discover -s tests -v` using Python 3.10 or newer. The backend uses only the Python standard library; the Streamlit front end is installed from `requirements.txt`.

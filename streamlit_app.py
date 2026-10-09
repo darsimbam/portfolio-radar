@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import time
 from datetime import datetime
 from typing import Any
-from urllib.parse import quote
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 
 import streamlit as st
 
@@ -26,10 +29,57 @@ def configured_secret(name: str) -> str:
 
 
 def configure_provider_secrets() -> None:
-    for name in ("OPENAI_API_KEY", "OPENAI_MODEL"):
+    for name in (
+        "OPENAI_API_KEY",
+        "OPENAI_MODEL",
+        "OPENAI_RESEARCH_MODEL",
+        "PORTFOLIO_RADAR_ACTION_API_URL",
+        "PORTFOLIO_RADAR_DASHBOARD_TOKEN",
+    ):
         value = configured_secret(name)
         if value:
             os.environ[name] = value
+
+
+def dashboard_action_sync_configured() -> bool:
+    return bool(
+        configured_secret("PORTFOLIO_RADAR_ACTION_API_URL")
+        and configured_secret("PORTFOLIO_RADAR_DASHBOARD_TOKEN")
+    )
+
+
+def fetch_action_research_runs() -> list[dict[str, Any]]:
+    base_url = configured_secret("PORTFOLIO_RADAR_ACTION_API_URL").rstrip("/")
+    token = configured_secret("PORTFOLIO_RADAR_DASHBOARD_TOKEN")
+    parsed_url = urlparse(base_url)
+    if parsed_url.scheme != "https" or not parsed_url.hostname or parsed_url.username or parsed_url.password:
+        raise RuntimeError("PORTFOLIO_RADAR_ACTION_API_URL must be a valid HTTPS service URL.")
+    if len(token) < 32:
+        raise RuntimeError("PORTFOLIO_RADAR_DASHBOARD_TOKEN must be at least 32 characters.")
+
+    request = Request(
+        f"{base_url}/api/dashboard/research-runs",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            payload = json.loads(response.read())
+    except HTTPError as error:
+        if error.code in (401, 403):
+            raise RuntimeError("Render rejected the dashboard sync token. Check its configuration.") from None
+        raise RuntimeError(f"Could not load ChatGPT research from Render (HTTP {error.code}).") from None
+    except (URLError, TimeoutError) as error:
+        reason = error.reason if isinstance(error, URLError) else "request timed out"
+        raise RuntimeError(f"Could not reach the Portfolio Radar research API: {reason}.") from None
+    except OSError as error:
+        raise RuntimeError(f"Could not load ChatGPT research from Render: {error}.") from None
+    except json.JSONDecodeError:
+        raise RuntimeError("Portfolio Radar research API returned invalid JSON.") from None
+
+    if not isinstance(payload, dict) or not isinstance(payload.get("researchRuns"), list):
+        raise RuntimeError("Portfolio Radar research API returned an unexpected response.")
+    return payload["researchRuns"]
 
 
 def save_note(company_id: str, text: str) -> None:
@@ -205,6 +255,56 @@ def link_research_citations(report_text: str, sources: list[dict[str, Any]]) -> 
     return linked_text
 
 
+def display_chatgpt_action_run(run: dict[str, Any]) -> None:
+    st.caption(f"{run['provider']} · {run['model']} · {run['createdAt']} · {run['scope']}")
+    st.markdown(f"**Research question:** {run['query']}")
+    report = run["report"]
+    sources_by_url = {source["url"]: source for source in report["sources"]}
+
+    st.markdown("**Facts**")
+    if report["facts"]:
+        for index, fact in enumerate(report["facts"]):
+            st.write(f"- {fact['statement']}")
+            for source_index, source_url in enumerate(fact["sourceUrls"]):
+                source = sources_by_url[source_url]
+                st.link_button(
+                    source["title"],
+                    source_url,
+                    key=f"chatgpt-fact-source-{run['id']}-{index}-{source_index}",
+                )
+    else:
+        st.write("No sourced facts included.")
+
+    for title, field in (
+        ("Assumptions", "assumptions"),
+        ("Interpretation", "interpretation"),
+        ("Risks", "risks"),
+        ("Open questions", "openQuestions"),
+    ):
+        st.markdown(f"**{title}**")
+        value = report[field]
+        if isinstance(value, list):
+            if value:
+                for item in value:
+                    st.write(f"- {item}")
+            else:
+                st.write("None supplied.")
+        else:
+            st.write(value or "None supplied.")
+
+    st.markdown("**Sources**")
+    if report["sources"]:
+        for index, source in enumerate(report["sources"]):
+            published = f" · {source['publishedAt']}" if source.get("publishedAt") else ""
+            st.link_button(
+                f"{source['title']}{published}",
+                source["url"],
+                key=f"chatgpt-source-{run['id']}-{index}",
+            )
+    else:
+        st.warning("This report contains no source links.")
+
+
 def render_login(password: str) -> None:
     if not password:
         st.error(
@@ -371,6 +471,25 @@ def render_research_desk(payload: dict[str, Any]) -> None:
                 st.rerun()
 
     runs = [run for run in payload["researchRuns"] if run.get("kind") == "web_research"]
+    st.subheader("From ChatGPT")
+    if dashboard_action_sync_configured():
+        try:
+            chatgpt_runs = fetch_action_research_runs()
+        except RuntimeError as error:
+            st.error(f"Could not sync ChatGPT Action reports: {error}")
+        else:
+            if chatgpt_runs:
+                for run in chatgpt_runs:
+                    with st.expander(f"{run['createdAt']} · {run['query'][:90]}"):
+                        display_chatgpt_action_run(run)
+            else:
+                st.caption("No research has been saved from ChatGPT yet.")
+    else:
+        st.info(
+            "Connect the ChatGPT Action by setting PORTFOLIO_RADAR_ACTION_API_URL and "
+            "PORTFOLIO_RADAR_DASHBOARD_TOKEN in this dashboard's Streamlit secrets."
+        )
+
     st.subheader("Research history")
     if not runs:
         st.caption("No dashboard research runs yet.")

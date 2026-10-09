@@ -72,7 +72,6 @@ def get_session(session_id: str | None) -> dict[str, Any] | None:
         session["expiresAt"] = monotonic_time.monotonic() + SESSION_LIFETIME_SECONDS
         return session
 
-
 def clear_expired_sessions() -> None:
     now = monotonic_time.monotonic()
     expired = [key for key, value in AUTH_SESSIONS.items() if value["expiresAt"] <= now]
@@ -126,6 +125,97 @@ def load_state() -> dict[str, Any]:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def validate_action_research_payload(body: dict[str, Any]) -> dict[str, Any]:
+    query = body.get("query")
+    if not isinstance(query, str) or not 1 <= len(query.strip()) <= 2_000:
+        raise ValueError("query must contain 1–2000 characters.")
+
+    report = body.get("report")
+    required_report_fields = {"facts", "assumptions", "interpretation", "risks", "openQuestions", "sources"}
+    if not isinstance(report, dict) or not required_report_fields.issubset(report):
+        raise ValueError("report must include facts, assumptions, interpretation, risks, openQuestions and sources.")
+
+    sources = report["sources"]
+    if not isinstance(sources, list) or len(sources) > 50:
+        raise ValueError("report.sources must be an array of at most 50 sources.")
+    validated_sources = []
+    source_urls = set()
+    for source in sources:
+        if not isinstance(source, dict):
+            raise ValueError("Each source must include a title and an HTTPS URL.")
+        title = source.get("title")
+        url = source.get("url")
+        parsed_url = urlparse(url) if isinstance(url, str) else None
+        if (
+            not isinstance(title, str)
+            or not 1 <= len(title.strip()) <= 300
+            or parsed_url is None
+            or parsed_url.scheme != "https"
+            or not parsed_url.hostname
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+            or len(url) > 2_048
+        ):
+            raise ValueError("Each source requires a short title and a valid HTTPS URL.")
+        normalized_source = {"title": title.strip(), "url": url}
+        published_at = source.get("publishedAt")
+        if published_at is not None:
+            if not isinstance(published_at, str) or len(published_at) > 100:
+                raise ValueError("Source publishedAt must be a string of at most 100 characters.")
+            normalized_source["publishedAt"] = published_at
+        validated_sources.append(normalized_source)
+        source_urls.add(url)
+
+    facts = report["facts"]
+    if not isinstance(facts, list) or len(facts) > 50:
+        raise ValueError("report.facts must be an array of at most 50 facts.")
+    validated_facts = []
+    for fact in facts:
+        if not isinstance(fact, dict):
+            raise ValueError("Each fact must include a statement and sourceUrls.")
+        statement = fact.get("statement")
+        fact_sources = fact.get("sourceUrls")
+        if (
+            not isinstance(statement, str)
+            or not 1 <= len(statement.strip()) <= 2_000
+            or not isinstance(fact_sources, list)
+            or not fact_sources
+            or len(fact_sources) > 10
+            or any(not isinstance(url, str) or url not in source_urls for url in fact_sources)
+        ):
+            raise ValueError("Each fact needs a statement and sourceUrls from report.sources.")
+        validated_facts.append(
+            {"statement": statement.strip(), "sourceUrls": list(dict.fromkeys(fact_sources))}
+        )
+
+    normalized_report: dict[str, Any] = {
+        "facts": validated_facts,
+        "sources": validated_sources,
+    }
+    for field in ("assumptions", "risks", "openQuestions"):
+        values = report[field]
+        if (
+            not isinstance(values, list)
+            or len(values) > 50
+            or any(not isinstance(item, str) or len(item.strip()) > 2_000 for item in values)
+        ):
+            raise ValueError(f"report.{field} must be an array of at most 50 short strings.")
+        normalized_report[field] = [item.strip() for item in values if item.strip()]
+
+    interpretation = report["interpretation"]
+    if not isinstance(interpretation, str) or len(interpretation.strip()) > 10_000:
+        raise ValueError("report.interpretation must be a string of at most 10000 characters.")
+    normalized_report["interpretation"] = interpretation.strip()
+    model = body.get("model", "ChatGPT")
+    if not isinstance(model, str) or not 1 <= len(model.strip()) <= 100:
+        raise ValueError("model must be a short string.")
+    return {
+        "query": query.strip(),
+        "model": model.strip(),
+        "report": normalized_report,
+    }
 
 
 def scheduled_time_for_local_date(day: date) -> datetime:
@@ -609,6 +699,21 @@ class RadarHandler(BaseHTTPRequestHandler):
             return None
         return session
 
+    def require_bearer_token(self, environment_key: str) -> bool:
+        expected_token = os.getenv(environment_key, "")
+        if len(expected_token) < 32:
+            self.send_json({"error": f"{environment_key} is not configured with a secure token."}, 503)
+            return False
+        scheme, separator, supplied_token = self.headers.get("Authorization", "").partition(" ")
+        if (
+            not separator
+            or scheme.lower() != "bearer"
+            or not hmac.compare_digest(supplied_token, expected_token)
+        ):
+            self.send_json({"error": "A valid bearer token is required."}, 401)
+            return False
+        return True
+
     def login(self) -> None:
         if not auth_required():
             self.send_json({"error": "Authentication is not enabled for this local-only instance."}, 404)
@@ -674,9 +779,9 @@ class RadarHandler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def read_body(self) -> dict[str, Any]:
+    def read_body(self, max_bytes: int = 16_384) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
-        if length > 16_384:
+        if length < 0 or length > max_bytes:
             raise ValueError("Request body is too large.")
         value = json.loads(self.rfile.read(length) or b"{}")
         if not isinstance(value, dict):
@@ -687,6 +792,17 @@ class RadarHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/healthz":
             self.send_json({"status": "ok"})
+            return
+        if path == "/api/dashboard/research-runs":
+            if not self.require_bearer_token("PORTFOLIO_RADAR_DASHBOARD_TOKEN"):
+                return
+            state = load_state()
+            runs = sorted(
+                (run for run in state["researchRuns"] if run.get("kind") == "chatgpt_action"),
+                key=lambda run: run["createdAt"],
+                reverse=True,
+            )[:100]
+            self.send_json({"researchRuns": runs})
             return
         if path == "/api":
             session = self.require_authenticated_session()
@@ -721,6 +837,35 @@ class RadarHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/login":
             self.login()
+            return
+        if path == "/api/actions/research-runs":
+            if not self.require_bearer_token("PORTFOLIO_RADAR_ACTION_TOKEN"):
+                return
+            try:
+                body = self.read_body(max_bytes=65_536)
+                validated = validate_action_research_payload(body)
+            except (ValueError, json.JSONDecodeError) as error:
+                self.send_json({"error": str(error)}, 400)
+                return
+            run = {
+                "id": f"chatgpt-{secrets.token_urlsafe(12)}",
+                "kind": "chatgpt_action",
+                "query": validated["query"],
+                "provider": "ChatGPT Action",
+                "model": validated["model"],
+                "createdAt": utc_now(),
+                "scope": "Research generated in ChatGPT and saved by a private GPT Action.",
+                "report": validated["report"],
+            }
+            try:
+                with STATE_LOCK:
+                    state = load_state()
+                    state["researchRuns"].append(run)
+                    save_state(state)
+            except OSError as error:
+                self.send_json({"error": f"Could not persist research run: {error}"}, 500)
+                return
+            self.send_json({"run": run}, 201)
             return
         session = self.require_authenticated_session()
         if session is None or not self.require_csrf(session):

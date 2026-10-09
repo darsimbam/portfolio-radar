@@ -458,5 +458,138 @@ class OpenAIResearchEndpointTests(unittest.TestCase):
         self.assertIn("valid company", result["error"])
 
 
+class PortfolioRadarActionEndpointTests(unittest.TestCase):
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = json.dumps(payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return self.payload
+
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        root = Path(self.temporary_directory.name)
+        self.state_patch = patch.object(server, "STATE_PATH", root / "state" / "user_state.json")
+        self.data_patch = patch.object(server, "DATA_DIR", root)
+        self.environ_patch = patch.dict(
+            "os.environ",
+            {
+                "PORTFOLIO_RADAR_ACTION_TOKEN": "a" * 48,
+                "PORTFOLIO_RADAR_DASHBOARD_TOKEN": "b" * 48,
+                "PORTFOLIO_RADAR_PASSWORD": "Private-Test-Password-48",
+            },
+            clear=True,
+        )
+        self.state_patch.start()
+        self.data_patch.start()
+        self.environ_patch.start()
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), server.RadarHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever)
+        self.thread.start()
+        self.connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+        self.addCleanup(self.cleanup)
+
+    def cleanup(self):
+        self.connection.close()
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+        self.environ_patch.stop()
+        self.data_patch.stop()
+        self.state_patch.stop()
+        self.temporary_directory.cleanup()
+
+    def request(self, method, path, body=None, token=None):
+        headers = {}
+        encoded_body = None
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+            encoded_body = json.dumps(body)
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        self.connection.request(method, path, encoded_body, headers)
+        response = self.connection.getresponse()
+        result = json.loads(response.read())
+        return response.status, result
+
+    @staticmethod
+    def research_payload():
+        return {
+            "query": "What changed in the latest earnings report?",
+            "model": "ChatGPT",
+            "report": {
+                "facts": [
+                    {
+                        "statement": "Revenue grew 12% year over year.",
+                        "sourceUrls": ["https://example.com/results"],
+                    }
+                ],
+                "assumptions": ["The reported growth is comparable."],
+                "interpretation": "Growth accelerated.",
+                "risks": ["One quarter may not indicate a trend."],
+                "openQuestions": ["How did margins change?"],
+                "sources": [
+                    {
+                        "title": "Company results",
+                        "url": "https://example.com/results",
+                        "publishedAt": "2026-10-08",
+                    }
+                ],
+            },
+        }
+
+    def test_action_requires_bearer_authentication_and_saves_cited_research(self):
+        status, result = self.request("POST", "/api/actions/research-runs", self.research_payload())
+        self.assertEqual(status, 401)
+        self.assertIn("bearer token", result["error"])
+
+        status, result = self.request(
+            "POST",
+            "/api/actions/research-runs",
+            self.research_payload(),
+            token="a" * 48,
+        )
+        self.assertEqual(status, 201)
+        run = result["run"]
+        self.assertEqual(run["kind"], "chatgpt_action")
+        self.assertEqual(run["report"]["facts"][0]["sourceUrls"], ["https://example.com/results"])
+        self.assertEqual(len(server.load_state()["researchRuns"]), 1)
+
+    def test_action_rejects_invalid_and_unmatched_citations(self):
+        payload = self.research_payload()
+        payload["report"]["facts"][0]["sourceUrls"] = ["https://unlisted.example/source"]
+        status, result = self.request(
+            "POST",
+            "/api/actions/research-runs",
+            payload,
+            token="a" * 48,
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("report.sources", result["error"])
+        self.assertEqual(server.load_state()["researchRuns"], [])
+
+    def test_dashboard_uses_a_separate_read_only_token(self):
+        status, _ = self.request(
+            "POST",
+            "/api/actions/research-runs",
+            self.research_payload(),
+            token="a" * 48,
+        )
+        self.assertEqual(status, 201)
+
+        status, result = self.request("GET", "/api/dashboard/research-runs", token="a" * 48)
+        self.assertEqual(status, 401)
+        status, result = self.request("GET", "/api/dashboard/research-runs", token="b" * 48)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(result["researchRuns"]), 1)
+        self.assertEqual(result["researchRuns"][0]["kind"], "chatgpt_action")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,151 @@
+openapi: 3.1.0
+info:
+  title: Portfolio Radar Research
+  description: Save research produced in ChatGPT to the private Portfolio Radar dashboard.
+  version: 1.0.0
+servers:
+  - url: https://portfolio-radar-myhf.onrender.com
+    description: Private Portfolio Radar API
+security:
+  - bearerAuth: []
+paths:
+  /api/actions/research-runs:
+    post:
+      operationId: saveResearchRun
+      x-openai-isConsequential: true
+      summary: Save this research to Portfolio Radar
+      description: >-
+        Save a completed research report from this ChatGPT conversation. Include the user's
+        research question, key factual claims, assumptions, interpretation, risks, open questions,
+        and source URLs. Do not claim a report has been saved unless this operation succeeds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResearchRunInput"
+      responses:
+        "201":
+          description: Research report saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run]
+                properties:
+                  run:
+                    $ref: "#/components/schemas/ResearchRun"
+        "400":
+          description: The research report or citations are invalid.
+        "401":
+          description: Missing or invalid bearer token.
+        "503":
+          description: Action API token is not configured.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    ResearchRunInput:
+      type: object
+      additionalProperties: false
+      required: [query, report]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: The research question answered in this report.
+        model:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: ChatGPT model label, if available; otherwise use ChatGPT.
+        report:
+          $ref: "#/components/schemas/ResearchReport"
+    ResearchReport:
+      type: object
+      additionalProperties: false
+      required: [facts, assumptions, interpretation, risks, openQuestions, sources]
+      properties:
+        facts:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [statement, sourceUrls]
+            properties:
+              statement:
+                type: string
+                minLength: 1
+                maxLength: 2000
+              sourceUrls:
+                type: array
+                minItems: 1
+                maxItems: 10
+                items:
+                  type: string
+                  format: uri
+                  description: Must match a URL in report.sources.
+        assumptions:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            maxLength: 2000
+        interpretation:
+          type: string
+          maxLength: 10000
+        risks:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            maxLength: 2000
+        openQuestions:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            maxLength: 2000
+        sources:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [title, url]
+            properties:
+              title:
+                type: string
+                minLength: 1
+                maxLength: 300
+              url:
+                type: string
+                format: uri
+                description: Must be an HTTPS URL.
+              publishedAt:
+                type: string
+                maxLength: 100
+    ResearchRun:
+      type: object
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        query:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        scope:
+          type: string
+        report:
+          $ref: "#/components/schemas/ResearchReport"

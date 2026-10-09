@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 import os
@@ -66,6 +67,58 @@ class StreamlitStateMutationTests(unittest.TestCase):
             ),
             text,
         )
+
+    def test_fetch_action_research_uses_configured_https_read_token(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def read(self):
+                return json.dumps({"researchRuns": [{"id": "chatgpt-test"}]}).encode()
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "PORTFOLIO_RADAR_ACTION_API_URL": "https://radar.example",
+                    "PORTFOLIO_RADAR_DASHBOARD_TOKEN": "b" * 48,
+                },
+                clear=True,
+            ),
+            patch(
+                "streamlit_app.configured_secret",
+                side_effect=lambda key: os.getenv(key, ""),
+            ),
+            patch("streamlit_app.urlopen", return_value=FakeResponse()) as request_mock,
+        ):
+            self.assertTrue(streamlit_app.dashboard_action_sync_configured())
+            runs = streamlit_app.fetch_action_research_runs()
+
+        request = request_mock.call_args.args[0]
+        self.assertEqual(request.full_url, "https://radar.example/api/dashboard/research-runs")
+        self.assertEqual(request.get_header("Authorization"), "Bearer " + "b" * 48)
+        self.assertEqual(runs, [{"id": "chatgpt-test"}])
+
+    def test_fetch_action_research_rejects_non_https_api_url(self):
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "PORTFOLIO_RADAR_ACTION_API_URL": "http://radar.example",
+                    "PORTFOLIO_RADAR_DASHBOARD_TOKEN": "b" * 48,
+                },
+                clear=True,
+            ),
+            patch(
+                "streamlit_app.configured_secret",
+                side_effect=lambda key: os.getenv(key, ""),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "valid HTTPS"):
+                streamlit_app.fetch_action_research_runs()
 
     def test_save_note_rejects_empty_text_and_unknown_company(self):
         with self.assertRaisesRegex(ValueError, "1–2000 characters"):

@@ -49,6 +49,25 @@ Set `OPENAI_API_KEY` in the app's local environment or deployment secrets; optio
 
 The separate tracker-analysis flow sends the selected fictional tracker name, ticker, sector, thesis, metrics, risks and evidence to OpenAI after confirmation; it does not search external sources. The opt-in daily scheduler checks at 09:00 local time while the app server is running and analyzes saved-watchlist tracker data sequentially, without web search. Enable/pause and “Run now” controls are on the dashboard. Runs while the app is stopped are not queued; an enabled schedule resumes when the app restarts. Per-company provider errors appear in monitoring outcomes, and failed reports are not saved as successful results.
 
+## Connect ChatGPT to save reports in Portfolio Radar
+
+This is a separate flow from the dashboard's OpenAI API research: a private Custom GPT can use your ChatGPT account to research during a conversation, then call Portfolio Radar's HTTPS Action API to save the completed report. It does not let the dashboard initiate requests through your ChatGPT subscription, and it does not read ChatGPT history. ChatGPT only calls the Action when you use the GPT; it does not run scheduled or background research.
+
+1. Deploy the latest repository to Render. In the Render service environment, set two separate random values of at least 32 characters: `PORTFOLIO_RADAR_ACTION_TOKEN` and `PORTFOLIO_RADAR_DASHBOARD_TOKEN`. Generate each locally in PowerShell with `python -c "import secrets; print(secrets.token_urlsafe(48))"`; run it twice and do not paste either value into chat or commit it. `render.yaml` declares these as secret environment variables.
+2. In Streamlit Community Cloud, add these entries to the app's secrets. Set `PORTFOLIO_RADAR_DASHBOARD_TOKEN` to the exact same dashboard-read token configured on Render:
+
+   ```toml
+   PORTFOLIO_RADAR_ACTION_API_URL = "https://portfolio-radar-myhf.onrender.com"
+   PORTFOLIO_RADAR_DASHBOARD_TOKEN = "same dashboard-read token as Render"
+   ```
+
+   Save and reboot the Streamlit app. Its Research desk reads ChatGPT Action reports from the Render API over HTTPS; those reports are persisted on Render's disk. This read token is separate from the ChatGPT Action token.
+3. In ChatGPT, create a private Custom GPT and open **Configure → Actions → Create new action**. Import or paste [`openapi/portfolio-radar-chatgpt-action.yaml`](./openapi/portfolio-radar-chatgpt-action.yaml). Select **API Key** authentication using the **Bearer** authorization scheme, and provide the Render `PORTFOLIO_RADAR_ACTION_TOKEN` value. Never use the website password or the dashboard-read token for this Action.
+4. Add GPT instructions such as: “Research using reliable sources. Keep facts separate from assumptions and interpretation. Include HTTPS source URLs and map every fact to at least one source URL. If a claim cannot be sourced, put it under assumptions or open questions rather than facts. Do not save anything unless I explicitly ask you to save the report to Portfolio Radar. When asked, call `saveResearchRun` with the question, facts, assumptions, interpretation, risks, open questions, and sources. Tell me whether the save succeeded.”
+5. Keep the GPT sharing setting private. Test it by asking a research question, reviewing the results, then asking it to save the report. Confirm the saved report and clickable sources appear under **Research desk → From ChatGPT** in the Streamlit app.
+
+The Action API uses a write token, validates HTTPS citations, and only accepts the bounded research-report fields in the OpenAPI schema. The dashboard uses a distinct read-only token. Both API tokens remain server-side secrets; the Action token is stored in the GPT's encrypted authentication configuration. The Action does not fetch brokerage data and cannot place trades. Saving a report sends that research content to your Portfolio Radar Render service and stores it on its persistent disk.
+
 This app is local-first and binds only to `127.0.0.1` by default. A single-user password gate is available for a private reverse-proxy deployment:
 
 - Set `PORTFOLIO_RADAR_PASSWORD` in the server environment to a unique password of at least 12 characters. It is never stored in source or JSON. The app checks it with PBKDF2, issues an HttpOnly/SameSite session cookie, enforces CSRF tokens on state-changing requests, expires idle sessions and throttles repeated failed logins. Sessions are in memory and end when the server restarts.

@@ -7,10 +7,12 @@ import os
 import time
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 
 import streamlit as st
 
 import server
+from ibkr_provider import IBKRConnectionError
 
 SESSION_LIFETIME_SECONDS = 12 * 60 * 60
 
@@ -90,6 +92,25 @@ def save_research_run(company: dict[str, Any], result: dict[str, Any]) -> dict[s
     return run
 
 
+def save_open_research_run(query: str, result: dict[str, Any]) -> dict[str, Any]:
+    run = {
+        "id": f"research-{int(datetime.now().timestamp() * 1000)}",
+        "kind": "web_research",
+        "query": query.strip(),
+        "provider": "OpenAI API · web search",
+        "model": result["model"],
+        "createdAt": server.utc_now(),
+        "scope": "Question sent to OpenAI; web search enabled. Not connected to ChatGPT history.",
+        "report": result["report"],
+        "sources": result["sources"],
+    }
+    with server.STATE_LOCK:
+        state = server.load_state()
+        state["researchRuns"].append(run)
+        server.save_state(state)
+    return run
+
+
 def navigate_to_tracker(company_id: str) -> None:
     company = next(
         (row for row in server.load_json(server.SEED_PATH)["companies"] if row["id"] == company_id),
@@ -113,8 +134,7 @@ def display_evidence(company: dict[str, Any]) -> None:
 def display_report(run: dict[str, Any]) -> None:
     report = run["report"]
     st.caption(
-        f"{run['provider']} · {run['model']} · {run['createdAt']} · "
-        "Analysis of supplied fictional tracker data only; no external sources searched."
+        f"{run['provider']} · {run['model']} · {run['createdAt']} · {run.get('scope', 'Supplied data only; no external sources searched.')}"
     )
     st.markdown("**Facts (from supplied data)**")
     if report["facts"]:
@@ -135,6 +155,54 @@ def display_report(run: dict[str, Any]) -> None:
             st.write("None returned.")
     st.markdown("**Interpretation**")
     st.write(report["interpretation"])
+
+
+def display_open_research_run(run: dict[str, Any]) -> None:
+    st.caption(f"{run['provider']} · {run['model']} · {run['createdAt']} · {run['scope']}")
+    st.markdown(f"**Research question:** {run['query']}")
+
+    st.markdown(link_research_citations(run["report"]["text"], run.get("sources", [])))
+
+    sources = run.get("sources", [])
+    if sources:
+        st.markdown("**Sources**")
+        for index, source in enumerate(sources, start=1):
+            if source.get("url", "").startswith("https://"):
+                st.link_button(
+                    f"{index}. {source.get('title') or source['url']}",
+                    source["url"],
+                    key=f"research-source-{run['id']}-{index}",
+                )
+
+
+def link_research_citations(report_text: str, sources: list[dict[str, Any]]) -> str:
+    linked_text = report_text
+    ordered_sources = sorted(
+        sources,
+        key=lambda item: item.get("startIndex")
+        if isinstance(item.get("startIndex"), int)
+        else -1,
+        reverse=True,
+    )
+    for source in ordered_sources:
+        start = source.get("startIndex")
+        end = source.get("endIndex")
+        url = source.get("url", "")
+        if (
+            not isinstance(start, int)
+            or not isinstance(end, int)
+            or not 0 <= start < end <= len(linked_text)
+            or not url.startswith("https://")
+        ):
+            continue
+        cited_text = linked_text[start:end].replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+        encoded_url = quote(url, safe=":/?#@!$&'()*+,;=%")
+        linked_text = (
+            linked_text[:start]
+            + f"[{cited_text}](<{encoded_url}>)"
+            + linked_text[end:]
+        )
+    return linked_text
 
 
 def render_login(password: str) -> None:
@@ -166,17 +234,19 @@ def render_dashboard(payload: dict[str, Any]) -> None:
     monitoring = payload["monitoring"]
     companies = {company["id"]: company for company in payload["companies"]}
     st.title("Overview")
-    st.caption("A calm view of what needs attention across your coverage.")
+    st.caption("A research desk for monitoring coverage and reviewing real account data.")
     st.warning(
-        "Fictional seed data. Companies, metrics, events, evidence and findings are invented. "
-        "No live market or broker data is connected. No trades are placed."
+        "The sample companies, findings, priorities, events and evidence below remain fictional. "
+        "Use the read-only IBKR panel to fetch your actual holdings and available market data. No trades are placed."
     )
 
     columns = st.columns(4)
-    columns[0].metric("Priorities", dashboard["priorityCount"])
-    columns[1].metric("Freshness", "Sample")
-    columns[2].metric("Companies", len(payload["companies"]))
+    columns[0].metric("Seed priorities", dashboard["priorityCount"])
+    columns[1].metric("Research data", "Fictional")
+    columns[2].metric("Sample trackers", len(payload["companies"]))
     columns[3].metric("Monitor", "On" if monitoring["enabled"] else "Paused")
+
+    render_ibkr_portfolio()
 
     left, right = st.columns(2)
     with left:
@@ -252,6 +322,191 @@ def render_dashboard(payload: dict[str, Any]) -> None:
                 st.success("Watchlist analysis started. Refresh the page to see its status.")
     if monitoring["enabled"]:
         server.monitoring_scheduler.start()
+
+
+def render_research_desk(payload: dict[str, Any]) -> None:
+    st.title("Research desk")
+    st.caption(
+        "Ask research questions from this dashboard. Portfolio Radar calls the OpenAI API directly; "
+        "it does not access ChatGPT conversations or plugins."
+    )
+    st.info(
+        "Web search is enabled for each run. Your question is sent to OpenAI, which may send search "
+        "queries to the web. Reports are saved in this app with clickable citations and a retrieval timestamp."
+    )
+    configured = payload["integrations"]["openai"]["configured"]
+    if not configured:
+        st.warning(
+            "OpenAI is not configured. Add OPENAI_API_KEY using the app's local environment or deployment secrets. "
+            "A ChatGPT subscription does not include API access."
+        )
+
+    with st.form("open-research-form"):
+        query = st.text_area(
+            "What should Portfolio Radar research?",
+            max_chars=2_000,
+            height=120,
+            placeholder="Example: Recent earnings, guidance changes, and major risks for a company or sector",
+        )
+        consent = st.checkbox(
+            "I consent to sending this question to OpenAI and enabling web search for this run.",
+            disabled=not configured,
+        )
+        submitted = st.form_submit_button(
+            "Research with OpenAI",
+            type="primary",
+            disabled=not configured,
+        )
+    if submitted:
+        if not consent:
+            st.error("Confirm the data-sharing notice before starting a research run.")
+        else:
+            try:
+                result = server.ResearchAgent().run_research(query)
+                save_open_research_run(query, result)
+            except (RuntimeError, OSError, ValueError) as error:
+                st.error(f"Research run failed: {error}")
+            else:
+                st.success("Research completed and saved to this workspace.")
+                st.rerun()
+
+    runs = [run for run in payload["researchRuns"] if run.get("kind") == "web_research"]
+    st.subheader("Research history")
+    if not runs:
+        st.caption("No dashboard research runs yet.")
+    for run in runs:
+        with st.expander(f"{run['createdAt']} · {run['query'][:90]}"):
+            display_open_research_run(run)
+
+
+def render_ibkr_portfolio() -> None:
+    st.subheader("Interactive Brokers · read-only account data")
+    st.caption(
+        "Fetch holdings, snapshot quotes and available ReportSnapshot fundamentals on demand. "
+        "Data is shown in this session only. Quotes may be delayed or unavailable depending on your IBKR subscriptions."
+    )
+    st.info(
+        "IBKR access works only when Portfolio Radar runs on the same computer as TWS or IB Gateway. "
+        "The hosted Streamlit Cloud app cannot connect to a gateway on your computer."
+    )
+    if st.button("Fetch IBKR holdings and market data", key="fetch-ibkr"):
+        try:
+            positions = server.BrokerDataProvider().get_positions()
+        except (IBKRConnectionError, OSError, RuntimeError, ValueError) as error:
+            st.error(f"IBKR data request failed: {error}")
+        else:
+            st.session_state["ibkr_snapshot"] = {
+                "positions": positions,
+                "retrievedAt": server.utc_now(),
+            }
+
+    snapshot = st.session_state.get("ibkr_snapshot")
+    if snapshot is None:
+        return
+    positions = snapshot["positions"]
+    st.caption(f"IBKR TWS API · retrieved {snapshot['retrievedAt']} · account identifiers are not displayed.")
+    if not positions:
+        st.info("IBKR connected successfully; no open positions were returned.")
+        return
+
+    rows = []
+    for position in positions:
+        rows.append(
+            {
+                "Symbol": position["symbol"],
+                "Type": position["securityType"],
+                "Quantity": position["quantity"],
+                "Average cost": position["averageCost"],
+                "Market price": position["marketPrice"],
+                "Market value": position["marketValue"],
+                "Unrealized P/L": position["unrealizedPnl"],
+                "Currency": position["currency"],
+                "Quote": position["quoteType"] or position["marketDataType"],
+                "P/E": position["fundamentals"].get("P/E"),
+                "P/B": position["fundamentals"].get("Price/book"),
+                "P/S": position["fundamentals"].get("Price/sales"),
+            }
+        )
+    st.dataframe(rows, hide_index=True, width="stretch")
+
+    for position in positions:
+        issues = []
+        if position["quoteError"]:
+            issues.append(f"Quote: {position['quoteError']}")
+        elif position["securityType"] == "STK" and position["marketPrice"] is None:
+            issues.append("No quote was returned; check market-data permissions or delayed-data settings in TWS.")
+        if position["fundamentalsError"]:
+            issues.append(f"Fundamentals: {position['fundamentalsError']}")
+        elif position["securityType"] == "STK" and not position["fundamentals"]:
+            issues.append(
+                "No supported fundamental ratios were returned; IBKR permissions and report availability vary."
+            )
+        if issues:
+            st.caption(f"{position['symbol']} · " + " ".join(issues))
+
+    with st.expander("Fundamental metrics returned by IBKR"):
+        for position in positions:
+            if position["fundamentals"]:
+                st.write(f"**{position['symbol']} · {position['currency']}**")
+                st.json(position["fundamentals"])
+        st.caption(
+            "Only P/E, market capitalization, price/book, price/sales, return on equity, gross margin "
+            "and dividend yield are extracted when IBKR supplies them. Fundamentals are not guaranteed."
+        )
+
+    st.markdown("#### Optional OpenAI analysis of one holding")
+    if not server.ProviderConfiguration.openai_configured():
+        st.info(
+            "OpenAI is not configured. Add OPENAI_API_KEY through local environment variables or Streamlit secrets. "
+            "A ChatGPT subscription does not include API access."
+        )
+        return
+
+    selected_index = st.selectbox(
+        "Position",
+        range(len(positions)),
+        format_func=lambda row_index: (
+            f"{positions[row_index]['symbol']} · {positions[row_index]['securityType']} · "
+            f"{positions[row_index]['currency']}"
+        ),
+        key="ibkr-analysis-position",
+    )
+    selected_position = positions[selected_index]
+    position_key = (
+        f"{selected_position['symbol']}-{selected_position['securityType']}-"
+        f"{selected_position['exchange']}-{selected_index}"
+    )
+    consent = st.checkbox(
+        "I consent to sending only this holding's quantity, cost, quote and available fundamentals to OpenAI. "
+        "No account ID, other holdings or notes are sent.",
+        key=f"ibkr-analysis-consent-{position_key}",
+    )
+    if st.button(
+        "Analyze selected holding with OpenAI",
+        disabled=not consent,
+        key=f"ibkr-analysis-run-{position_key}",
+    ):
+        try:
+            result = server.ResearchAgent().run_position(selected_position)
+        except (RuntimeError, OSError, ValueError) as error:
+            st.error(f"OpenAI analysis failed: {error}")
+        else:
+            reports = st.session_state.setdefault("ibkr_ai_reports", {})
+            reports[position_key] = {
+                "provider": "OpenAI API",
+                "model": result["model"],
+                "createdAt": server.utc_now(),
+                "scope": (
+                    "Selected IBKR position snapshot only; sent by explicit consent. "
+                    "No account ID, notes, other holdings or external sources included."
+                ),
+                "report": result["report"],
+            }
+    report = st.session_state.get("ibkr_ai_reports", {}).get(position_key)
+    if report:
+        with st.expander(f"Analysis · {report['createdAt']} · {report['model']}", expanded=True):
+            display_report(report)
+            st.caption("AI-generated interpretation of supplied data only; not independently verified or financial advice.")
 
 
 def render_discovery(payload: dict[str, Any]) -> None:
@@ -582,7 +837,14 @@ def main() -> None:
         '<span>radar<small>PRIVATE RESEARCH</small></span></div>',
         unsafe_allow_html=True,
     )
-    pages = ["Overview", "Discovery", "Company trackers", "Notes & watchlists", "Review templates"]
+    pages = [
+        "Overview",
+        "Research desk",
+        "Discovery",
+        "Company trackers",
+        "Notes & watchlists",
+        "Review templates",
+    ]
     if st.session_state.get("page") not in pages:
         st.session_state["page"] = pages[0]
     page = st.sidebar.radio("Workspace", pages, key="page")
@@ -591,10 +853,12 @@ def main() -> None:
         st.session_state["authenticated"] = False
         st.session_state.pop("authenticated_until", None)
         st.rerun()
-    st.caption(f"Workspace / {page} · FICTIONAL SEED DATA")
+    st.caption(f"Workspace / {page} · Seed examples are fictional · Live research is labelled by source")
 
     if page == "Overview":
         render_dashboard(payload)
+    elif page == "Research desk":
+        render_research_desk(payload)
     elif page == "Discovery":
         render_discovery(payload)
     elif page == "Company trackers":

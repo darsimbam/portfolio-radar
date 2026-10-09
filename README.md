@@ -23,27 +23,31 @@ Do not put real passwords or API keys in source control or chat. Locally saved n
 ## What works
 
 - Monitoring dashboard with sample priorities, data freshness, upcoming events, coverage and monitoring status.
+- On-demand, read-only IBKR positions with TWS/IB Gateway snapshot quotes and available fundamental ratios when run locally.
 - Search and category filters for discovery cards, with expandable evidence trails.
 - Company trackers with theses, sample metrics, risks, evidence provenance and change history.
 - Consistent discovery, earnings, deterioration and weekly-review outlines.
 - Local notes and watchlist toggles persisted in `data/user_state.json`.
 - Responsive desktop/mobile interface with a high-contrast dark radar theme and scan-inspired brand styling.
 - A tested metric-change calculation exposed as a backend research tool.
+- Research desk for asking questions from the dashboard, calling the OpenAI API with web search, and saving source-linked reports.
 - Manual, per-company OpenAI analysis of the supplied tracker data when locally configured.
 - Opt-in local scheduler: once daily at 09:00 local time, analyzing saved-watchlist companies only.
 - Monitoring controls for enabling, pausing and running immediately, with timestamps and per-company outcomes.
 
 ## What is simulated
 
-Every company, metric, finding, event, evidence source, timestamp and history entry in `data/seed.json` is fictional sample content. It is not live research, a recommendation, or a real portfolio. The OpenAI integration performs a real model call only when manually triggered or when you explicitly enable the daily monitor; analysis is limited to supplied tracker content, fictional in this starter dataset. It does not browse or fetch current facts. Broker data remains disabled. The dashboard's sample dates are illustrative and should not be relied on.
+Every company, metric, finding, event, evidence source, timestamp and history entry in `data/seed.json` is fictional sample content. It is not live research, a recommendation, or a real portfolio. Research Desk runs are real OpenAI API calls with web search, only after explicit user action and consent; they are stored locally with clickable web citations and a retrieval timestamp. Per-company tracker analysis and the optional daily watchlist monitor still analyze only supplied tracker data and do not search the web. The dashboard's sample dates are illustrative and should not be relied on.
 
-No trading functionality is implemented. Without manually triggering analysis or explicitly enabling monitoring, the app makes no outbound provider calls. It does not collect credentials in the UI or chat.
+No trading functionality is implemented. Without manually triggering research/analysis or explicitly enabling monitoring, the app makes no outbound provider calls. It does not collect credentials in the UI or chat.
 
 ## OpenAI research provider
 
-Set `OPENAI_API_KEY` in the local environment before starting the app; optionally set `OPENAI_MODEL` (default `gpt-4.1-mini`). For example, in PowerShell, set `$env:OPENAI_API_KEY` in the same terminal session used to run `python server.py`. Never paste credentials into chat or commit them.
+Portfolio Radar is the research interface: use its **Research desk** page to submit a question, call the OpenAI Responses API with web search, and review saved reports and citations in the dashboard. This does not query your ChatGPT account, subscription, plugins, or conversation history. API access and billing are separate from a ChatGPT subscription.
 
-Before each manual run or monitoring opt-in, the interface asks for confirmation and explains that company name, ticker, sector, thesis, metrics, risks and evidence are sent to OpenAI. Notes and watchlist membership are not sent. Manual runs are per-company. The opt-in scheduler checks daily at 09:00 local time while the app server is running, and analyzes the saved watchlist sequentially. Enable/pause and “Run now” controls are on the dashboard. The next run is shown with the local timezone; runs while the app is stopped are not queued, and an enabled schedule resumes when the app restarts. Reports distinguish supplied facts, assumptions, interpretation, risks and open questions; they are stored locally in `data/user_state.json` with provider, model, trigger, scope and timestamp. The app does not independently verify model output. Per-company provider errors appear in monitoring outcomes; failed reports are not saved as successful results.
+Set `OPENAI_API_KEY` in the app's local environment or deployment secrets; optionally set `OPENAI_MODEL` (default `gpt-4.1-mini`) and `OPENAI_RESEARCH_MODEL` (default `gpt-5.5`, which must be available to your API account and support the Responses API web-search tool). Never paste credentials into chat or commit them. Research Desk displays a consent notice because the question is sent to OpenAI and web search may send search queries to external websites. It does not send saved notes, watchlist membership, or other tracker data with a standalone research question. Reports are saved locally in `data/user_state.json` with provider, model, question, citations, scope and retrieval timestamp. Model responses and sources are not independently verified by the app.
+
+The separate tracker-analysis flow sends the selected fictional tracker name, ticker, sector, thesis, metrics, risks and evidence to OpenAI after confirmation; it does not search external sources. The opt-in daily scheduler checks at 09:00 local time while the app server is running and analyzes saved-watchlist tracker data sequentially, without web search. Enable/pause and “Run now” controls are on the dashboard. Runs while the app is stopped are not queued; an enabled schedule resumes when the app restarts. Per-company provider errors appear in monitoring outcomes, and failed reports are not saved as successful results.
 
 This app is local-first and binds only to `127.0.0.1` by default. A single-user password gate is available for a private reverse-proxy deployment:
 
@@ -60,22 +64,45 @@ The Streamlit entry point is `streamlit_app.py`; `requirements.txt` installs Str
 
 ```toml
 PORTFOLIO_RADAR_PASSWORD = "choose-a-unique-password-of-at-least-12-characters"
-# Optional: enable manually triggered OpenAI analysis and opt-in monitoring.
+# Optional: enable dashboard research and opt-in monitoring.
 # OPENAI_API_KEY = "..."
 # OPENAI_MODEL = "gpt-4.1-mini"
+# OPENAI_RESEARCH_MODEL = "gpt-5.5"
 ```
 
 Set `PORTFOLIO_RADAR_PASSWORD` before sharing the deployment. Keep the app's platform visibility/access controls appropriately restricted as well; the in-app password is an additional gate, not a replacement for platform access controls. Never put credentials in GitHub source files or chat.
 
 The Streamlit app saves notes and watchlists to `data/user_state.json`. Streamlit Community Cloud does not provide durable local-file storage as an application database; local state can be lost when the app restarts, rebuilds, or is moved. Use a persistent database and backups before relying on saved research. The opt-in daily scheduler runs only while the app process is alive and is not a guaranteed hosted scheduler. Configure a dedicated persistent database and scheduled job for reliable private deployment.
 
-After deployment, verify the sign-in gate, all five workspace sections, notes/watchlist behavior, and platform access restrictions. Seed companies, metrics, events, evidence and findings remain fictional. OpenAI analysis is optional and only runs after explicit user action or opt-in monitoring.
+After deployment, verify the sign-in gate, all six workspace sections, notes/watchlist behavior, Research desk citations and platform access restrictions. Seed companies, metrics, events, evidence and findings remain fictional. OpenAI calls are optional and only run after explicit user action or opt-in monitoring.
 
 ## Existing Render deployment
 
 The earlier Render service is configured to start the original HTTP interface with `python server.py`; it does not automatically serve the Streamlit interface. The existing service configuration and state path are in `render.yaml`. To deploy the new interface on Streamlit Community Cloud, use the Streamlit setup above rather than changing Render's start command. The standalone HTTP interface and its tests remain available for local use and as a backend reference.
 
-`BrokerDataProvider` in `server.py` remains an unconfigured seam and fails explicitly. The scheduler is opt-in, local-process-bound, and records run state, time and per-company failures. Keep calculations in explicit tested tools and label any future data with its actual source and retrieval timestamp.
+`BrokerDataProvider` uses the Interactive Brokers TWS API in read-only mode. It fetches positions, snapshot quotes and available `ReportSnapshot` fundamentals only after the user clicks the fetch button. It does not place orders, show account IDs, or persist holdings. The scheduler is opt-in, local-process-bound, and records run state, time and per-company failures. Keep calculations in explicit tested tools and label data with its source and retrieval timestamp.
+
+## Connect Interactive Brokers locally
+
+The IBKR connection is deliberately local. Streamlit Community Cloud cannot reach TWS or IB Gateway running on your computer, so use the local Streamlit app to view your actual account data:
+
+1. Install and sign in to Trader Workstation (TWS) or IB Gateway.
+2. In its API settings, enable socket clients, allow localhost connections, and keep **Read-Only API** enabled. Do not expose the socket port publicly.
+3. For TWS paper trading, the default API port is `7497`; for IB Gateway paper trading it is usually `4002`. Set `PORTFOLIO_RADAR_IBKR_PORT` to the configured local port if needed. Live TWS/IB Gateway ports are typically `7496`/`4001`; selecting one is an explicit local configuration choice.
+4. Start Portfolio Radar on that same computer:
+
+   ```powershell
+   $env:PORTFOLIO_RADAR_PASSWORD = "use-a-unique-local-password"
+   streamlit run streamlit_app.py
+   ```
+
+5. Sign in and click **Fetch IBKR holdings and market data**. Nothing is fetched automatically.
+
+Optional non-secret connection settings are `PORTFOLIO_RADAR_IBKR_HOST` (must be localhost), `PORTFOLIO_RADAR_IBKR_PORT` (default `7497`), and `PORTFOLIO_RADAR_IBKR_CLIENT_ID` (default `42`). The app does not request or store IBKR login credentials. IBKR may return live, frozen, delayed, or no quote depending on market-data permissions; available company ratios are also subject to IBKR report/entitlement availability. Snapshot values are labelled with their retrieval time and returned market-data type.
+
+An optional OpenAI analysis is available for one selected holding only after an explicit consent checkbox. It sends the selected symbol, quantity, cost, returned quote/fundamentals and retrieval time, but not account IDs, notes, or other holdings. Results are held only in the current app session. `OPENAI_API_KEY` is a separate API credential; a ChatGPT subscription does not provide API access. Configure the key through local environment variables or Streamlit secrets, never in chat or source control.
+
+The sample company trackers and discovery content remain fictional and separate from IBKR account data. No broker holdings are used to alter those sample theses or findings. The Streamlit Cloud deployment can continue to show fictional demo content, but it cannot display your local IBKR account.
 
 User notes and watchlists are written as plain JSON to `data/user_state.json`; avoid storing confidential information in this demo. Delete that specific file to reset local user state (the app recreates the starter watchlist on next launch).
 

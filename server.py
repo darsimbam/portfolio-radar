@@ -24,6 +24,8 @@ from typing import Any
 from urllib.request import Request, urlopen
 from urllib.parse import urlparse
 
+from ibkr_provider import IBKRDataProvider
+
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 DATA_DIR = ROOT / "data"
@@ -145,7 +147,43 @@ class ProviderConfiguration:
         return bool(os.getenv("OPENAI_API_KEY", "").strip())
 
 class ResearchAgent:
-    """Manual OpenAI analysis of supplied tracker data, without web or broker access."""
+    """On-demand OpenAI research using supplied data or explicitly requested web search."""
+
+    def run_position(self, position: dict[str, Any]) -> dict[str, Any]:
+        retrieved_at = position["retrievedAt"]
+        facts = {
+            "securityType": position["securityType"],
+            "exchange": position["exchange"],
+            "currency": position["currency"],
+            "quantity": position["quantity"],
+            "averageCost": position["averageCost"],
+            "marketPrice": position["marketPrice"],
+            "marketValue": position["marketValue"],
+            "unrealizedPnl": position["unrealizedPnl"],
+            "quoteType": position["quoteType"],
+            "marketDataType": position["marketDataType"],
+            "fundamentals": position["fundamentals"],
+        }
+        company = {
+            "name": position["symbol"],
+            "ticker": position["symbol"],
+            "sector": "IBKR portfolio position",
+            "thesis": "No investment thesis supplied. Do not infer one.",
+            "metrics": [{"label": key, "value": value} for key, value in facts.items()],
+            "risks": [
+                "This report contains only the selected holding snapshot and does not verify issuer fundamentals.",
+                "Market data may be delayed or unavailable.",
+            ],
+            "evidence": [
+                {
+                    "type": "Fact · IBKR snapshot",
+                    "text": json.dumps(facts, ensure_ascii=False, sort_keys=True),
+                    "source": "Interactive Brokers TWS API",
+                    "timestamp": retrieved_at,
+                }
+            ],
+        }
+        return self.run(company)
 
     def run(self, company: dict[str, Any]) -> dict[str, Any]:
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -177,6 +215,40 @@ class ResearchAgent:
             "max_output_tokens": 1200,
             "text": {"format": {"type": "json_object"}},
         }
+        response_body = self._request_openai(api_key, request_body)
+        report, _ = self._parse_report(response_body)
+        return {"model": model, "report": report}
+
+    def run_research(self, query: str) -> dict[str, Any]:
+        clean_query = query.strip()
+        if not clean_query or len(clean_query) > 2_000:
+            raise ValueError("Research question must contain 1–2000 characters.")
+
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("OpenAI is not configured. Set OPENAI_API_KEY in the local environment.")
+
+        model = os.getenv("OPENAI_RESEARCH_MODEL", "gpt-5.5").strip()
+        request_body = {
+            "model": model,
+            "tools": [{"type": "web_search"}],
+            "input": (
+                "Research this investment-related question using web search. Do not rely on model memory for "
+                "current claims. Separate the answer under these exact Markdown headings: Facts, Assumptions, "
+                "Interpretation, Risks and open questions. Keep facts tied to current, reputable sources and "
+                "cite them inline using the web-search citations. Distinguish reported facts from your "
+                "interpretation, include source publication dates when available, and state uncertainty or "
+                "missing evidence explicitly. Do not give personalized financial advice or trade instructions.\n\n"
+                f"Research question: {clean_query}"
+            ),
+            "max_output_tokens": 2_000,
+        }
+        response_body = self._request_openai(api_key, request_body)
+        output_text, sources = self._extract_web_report(response_body)
+        return {"model": model, "report": {"text": output_text}, "sources": sources}
+
+    @staticmethod
+    def _request_openai(api_key: str, request_body: dict[str, Any]) -> dict[str, Any]:
         request = Request(
             "https://api.openai.com/v1/responses",
             data=json.dumps(request_body).encode("utf-8"),
@@ -202,19 +274,11 @@ class ResearchAgent:
 
         if not isinstance(response_body, dict):
             raise RuntimeError("OpenAI returned an unexpected response structure.")
-        output_text = response_body.get("output_text")
-        if not output_text:
-            output_text = next(
-                (
-                    content["text"]
-                    for item in response_body.get("output", [])
-                    for content in item.get("content", [])
-                    if content.get("type") == "output_text" and isinstance(content.get("text"), str)
-                ),
-                None,
-            )
-        if not isinstance(output_text, str):
-            raise RuntimeError("OpenAI response did not contain a research report.")
+        return response_body
+
+    @classmethod
+    def _parse_report(cls, response_body: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        output_text, sources = cls._extract_web_report(response_body)
         try:
             report = json.loads(output_text)
         except json.JSONDecodeError:
@@ -230,14 +294,56 @@ class ResearchAgent:
             or not isinstance(report["interpretation"], str)
         ):
             raise RuntimeError("OpenAI report has invalid section types.")
-        return {"model": model, "report": report}
+        return report, sources
+
+    @staticmethod
+    def _extract_web_report(response_body: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+        output_text = response_body.get("output_text")
+        sources = []
+        output_parts = []
+        for item in response_body.get("output", []):
+            for content in item.get("content", []):
+                if content.get("type") == "output_text" and isinstance(content.get("text"), str):
+                    output_parts.append(content["text"])
+                    sources.extend(
+                        annotation
+                        for annotation in content.get("annotations", [])
+                        if annotation.get("type") == "url_citation"
+                    )
+        if not isinstance(output_text, str):
+            output_text = "".join(output_parts) or None
+        if not isinstance(output_text, str):
+            raise RuntimeError("OpenAI response did not contain a research report.")
+        valid_sources = []
+        seen_citations = set()
+        for source in sources:
+            url = source.get("url")
+            citation_key = (url, source.get("start_index"), source.get("end_index"))
+            if (
+                not isinstance(url, str)
+                or not url.startswith("https://")
+                or citation_key in seen_citations
+            ):
+                continue
+            seen_citations.add(citation_key)
+            valid_sources.append(
+                {
+                    "url": url,
+                    "title": source.get("title") or url,
+                    "startIndex": source.get("start_index"),
+                    "endIndex": source.get("end_index"),
+                    "citedText": output_text[source["start_index"]:source["end_index"]]
+                    if isinstance(source.get("start_index"), int)
+                    and isinstance(source.get("end_index"), int)
+                    and 0 <= source["start_index"] < source["end_index"] <= len(output_text)
+                    else "",
+                }
+            )
+        return output_text, valid_sources
 
 
-class BrokerDataProvider:
-    """Interface for a future broker data adapter; no broker connection is made."""
-
-    def get_positions(self) -> list[dict[str, Any]]:
-        raise NotImplementedError("No broker provider is configured.")
+class BrokerDataProvider(IBKRDataProvider):
+    """Read-only account positions and market data from a local IBKR gateway."""
 
 
 class MonitoringScheduler:
@@ -437,9 +543,17 @@ def api_payload() -> dict[str, Any]:
                 "configured": ProviderConfiguration.openai_configured(),
                 "status": "ready_for_manual_run" if ProviderConfiguration.openai_configured() else "not_configured",
                 "manualOnly": True,
-                "externalDataDisclosure": "Selected tracker thesis, metrics, risks and evidence are sent to OpenAI when you run analysis.",
+                "externalDataDisclosure": (
+                    "Research Desk sends the question to OpenAI with web search enabled; tracker analysis and "
+                    "scheduled monitoring use supplied tracker data only."
+                ),
             },
-            "broker": {"configured": bool(os.getenv("PORTFOLIO_RADAR_BROKER_URL")), "status": "disabled"},
+            "broker": {
+                "configured": False,
+                "status": "manual_local_connection",
+                "provider": "Interactive Brokers TWS API",
+                "requiresLocalGateway": True,
+            },
             "scheduledMonitoring": {
                 "configured": ProviderConfiguration.openai_configured(),
                 "status": state["monitoring"]["status"],

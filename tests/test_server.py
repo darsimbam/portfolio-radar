@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, call, patch
 
 import server
+import ibkr_provider
 
 
 class MetricCalculationTests(unittest.TestCase):
@@ -78,8 +79,9 @@ class PayloadTests(unittest.TestCase):
     def test_unconfigured_provider_seams_fail_explicitly(self):
         with patch.dict("os.environ", {}, clear=True), self.assertRaisesRegex(RuntimeError, "OPENAI_API_KEY"):
             server.ResearchAgent().run({})
-        with self.assertRaisesRegex(NotImplementedError, "No broker provider"):
-            server.BrokerDataProvider().get_positions()
+        with patch.dict("os.environ", {"PORTFOLIO_RADAR_IBKR_HOST": "192.168.1.10"}, clear=True):
+            with self.assertRaisesRegex(ibkr_provider.IBKRConnectionError, "this computer"):
+                server.BrokerDataProvider()
 
 
 class DeploymentHealthCheckTests(unittest.TestCase):
@@ -100,6 +102,90 @@ class DeploymentHealthCheckTests(unittest.TestCase):
             server_instance.shutdown()
             server_instance.server_close()
             thread.join()
+
+
+class OpenAIWebResearchTests(unittest.TestCase):
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = json.dumps(payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return self.payload
+
+    def test_research_uses_web_search_and_returns_citations(self):
+        text = (
+            "## Facts\nA company announced a new product today.\n\n"
+            "## Assumptions\nThe launch may contribute to growth.\n\n"
+            "## Interpretation\nThe strategic impact remains uncertain.\n\n"
+            "## Risks and open questions\nAdoption and margins remain unknown."
+        )
+        cited_claim = "A company announced a new product today."
+        start = text.index(cited_claim)
+        fake_response = self.FakeResponse(
+            {
+                "output_text": text,
+                "output": [
+                    {
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": text,
+                                "annotations": [
+                                    {
+                                        "type": "url_citation",
+                                        "start_index": start,
+                                        "end_index": start + len(cited_claim),
+                                        "url": "https://example.com/news",
+                                        "title": "Example company announcement",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ],
+            }
+        )
+        with (
+            patch.dict(
+                "os.environ",
+                {"OPENAI_API_KEY": "unit-test-key", "OPENAI_RESEARCH_MODEL": "test-research-model"},
+                clear=True,
+            ),
+            patch("server.urlopen", return_value=fake_response) as openai_request,
+        ):
+            result = server.ResearchAgent().run_research("What happened at the company today?")
+
+        request = openai_request.call_args.args[0]
+        request_body = json.loads(request.data)
+        self.assertEqual(request_body["model"], "test-research-model")
+        self.assertEqual(request_body["tools"], [{"type": "web_search"}])
+        self.assertIn("What happened at the company today?", request_body["input"])
+        self.assertEqual(result["report"]["text"], text)
+        self.assertEqual(
+            result["sources"],
+            [
+                {
+                    "url": "https://example.com/news",
+                    "title": "Example company announcement",
+                    "startIndex": start,
+                    "endIndex": start + len(cited_claim),
+                    "citedText": cited_claim,
+                }
+            ],
+        )
+
+    def test_research_question_must_not_be_empty_or_oversized(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "unit-test-key"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "1–2000 characters"):
+                server.ResearchAgent().run_research(" ")
+            with self.assertRaisesRegex(ValueError, "1–2000 characters"):
+                server.ResearchAgent().run_research("x" * 2_001)
 
 
 class MonitoringSchedulerTests(unittest.TestCase):

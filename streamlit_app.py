@@ -173,10 +173,10 @@ def render_dashboard(payload: dict[str, Any]) -> None:
     )
 
     columns = st.columns(4)
-    columns[0].metric("Priority items", dashboard["priorityCount"])
-    columns[1].metric("Data freshness", "Sample only")
-    columns[2].metric("Coverage", len(payload["companies"]))
-    columns[3].metric("Monitoring", "Enabled" if monitoring["enabled"] else "Paused")
+    columns[0].metric("Priorities", dashboard["priorityCount"])
+    columns[1].metric("Freshness", "Sample")
+    columns[2].metric("Companies", len(payload["companies"]))
+    columns[3].metric("Monitor", "On" if monitoring["enabled"] else "Paused")
 
     left, right = st.columns(2)
     with left:
@@ -420,11 +420,145 @@ def main() -> None:
     st.markdown(
         """
         <style>
-        .stApp { background: #f5f7f5; }
-        [data-testid="stSidebar"] { background: #fbfcfb; }
+        :root {
+            color-scheme: dark;
+            --radar-bg: #071510;
+            --radar-panel: #0e2119;
+            --radar-panel-raised: #132a20;
+            --radar-line: #244436;
+            --radar-text: #e5f3eb;
+            --radar-muted: #a8c0b2;
+            --radar-green: #68e0a4;
+            --radar-amber: #f3c66c;
+        }
+        html, body, .stApp {
+            background: var(--radar-bg);
+            color: var(--radar-text);
+        }
+        [data-testid="stAppViewContainer"] {
+            background:
+                radial-gradient(circle at 91% 7%, rgba(34, 113, 75, .18), transparent 25rem),
+                linear-gradient(rgba(68, 133, 99, .045) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(68, 133, 99, .045) 1px, transparent 1px),
+                var(--radar-bg);
+            background-size: auto, 36px 36px, 36px 36px, auto;
+        }
+        [data-testid="stSidebar"] {
+            background: #091a13;
+            border-right: 1px solid var(--radar-line);
+        }
+        [data-testid="stSidebar"] > div:first-child { background: transparent; }
         .block-container { max-width: 1440px; padding-top: 2rem; }
-        div[data-testid="stMetric"] { background: white; border: 1px solid #e3e9e3; padding: 1rem; border-radius: 14px; }
-        div[data-testid="stAlert"] { border-radius: 12px; }
+        h1, h2, h3, h4, h5, h6, p, li, label, [data-testid="stMarkdownContainer"] {
+            color: var(--radar-text);
+        }
+        h1, h2 { letter-spacing: -.035em; }
+        [data-testid="stCaptionContainer"], [data-testid="stMetricLabel"],
+        [data-testid="stWidgetLabel"] p, small {
+            color: var(--radar-muted) !important;
+        }
+        [data-testid="stSidebar"] h1 { margin-bottom: .15rem; }
+        .radar-brand {
+            display: flex;
+            align-items: center;
+            gap: .7rem;
+            margin: .25rem 0 1.25rem;
+            color: var(--radar-text);
+            font-size: 1.55rem;
+            font-weight: 800;
+            letter-spacing: -.06em;
+        }
+        .radar-brand small {
+            display: block;
+            margin-top: .12rem;
+            color: var(--radar-muted);
+            font-size: .55rem;
+            font-weight: 600;
+            letter-spacing: .16em;
+        }
+        .radar-icon {
+            position: relative;
+            display: grid;
+            width: 2.45rem;
+            height: 2.45rem;
+            place-items: center;
+            overflow: hidden;
+            border: 1px solid rgba(104, 224, 164, .65);
+            border-radius: 50%;
+            background:
+                radial-gradient(circle, transparent 29%, rgba(104,224,164,.35) 30%, transparent 32%,
+                    transparent 59%, rgba(104,224,164,.35) 60%, transparent 62%),
+                linear-gradient(90deg, transparent 49.5%, rgba(104,224,164,.3) 50%, transparent 50.5%),
+                linear-gradient(transparent 49.5%, rgba(104,224,164,.3) 50%, transparent 50.5%),
+                #10281d;
+            box-shadow: 0 0 18px rgba(65, 212, 139, .12);
+        }
+        .radar-icon::after {
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            background: conic-gradient(from 0deg, transparent 0 76%, rgba(104,224,164,.42));
+            content: "";
+            animation: radar-sweep 5s linear infinite;
+        }
+        .radar-icon i {
+            z-index: 1;
+            width: .32rem;
+            height: .32rem;
+            border-radius: 50%;
+            background: var(--radar-green);
+            box-shadow: 0 0 9px var(--radar-green);
+        }
+        @keyframes radar-sweep { to { transform: rotate(360deg); } }
+        div[data-testid="stMetric"] {
+            border: 1px solid var(--radar-line);
+            border-top: 2px solid rgba(104, 224, 164, .7);
+            border-radius: 12px;
+            background: linear-gradient(145deg, rgba(19,42,32,.96), rgba(11,29,21,.96));
+            padding: 1rem;
+            box-shadow: 0 10px 28px rgba(0,0,0,.16);
+        }
+        [data-testid="stMetricValue"] {
+            color: var(--radar-green);
+            font-size: 1.25rem !important;
+            line-height: 1.2;
+        }
+        [data-testid="stMetricValue"] p {
+            font-size: inherit !important;
+            white-space: normal;
+        }
+        [data-testid="stMetricLabel"] p {
+            font-size: .68rem !important;
+            line-height: 1.2;
+            white-space: normal;
+        }
+        [data-testid="stAlert"] {
+            border: 1px solid rgba(243,198,108,.35);
+            border-radius: 12px;
+            background: rgba(105,76,27,.2);
+        }
+        [data-testid="stVerticalBlockBorderWrapper"] {
+            border-color: var(--radar-line);
+            background: rgba(14,33,25,.75);
+        }
+        [data-baseweb="select"] > div, [data-baseweb="input"] > div,
+        [data-baseweb="textarea"] > div {
+            border-color: var(--radar-line);
+            background: var(--radar-panel);
+        }
+        [data-testid="stDataFrame"] { border: 1px solid var(--radar-line); border-radius: 10px; }
+        button[kind="secondary"] {
+            border-color: var(--radar-line);
+            background: var(--radar-panel-raised);
+            color: var(--radar-text);
+        }
+        button[kind="secondary"]:hover {
+            border-color: var(--radar-green);
+            color: var(--radar-green);
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .radar-icon::after { animation: none; }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -443,8 +577,11 @@ def main() -> None:
     payload = server.api_payload()
     if payload["monitoring"]["enabled"]:
         server.monitoring_scheduler.start()
-    st.sidebar.title("📡 radar")
-    st.sidebar.caption("PRIVATE RESEARCH")
+    st.sidebar.markdown(
+        '<div class="radar-brand"><span class="radar-icon"><i></i></span>'
+        '<span>radar<small>PRIVATE RESEARCH</small></span></div>',
+        unsafe_allow_html=True,
+    )
     pages = ["Overview", "Discovery", "Company trackers", "Notes & watchlists", "Review templates"]
     if st.session_state.get("page") not in pages:
         st.session_state["page"] = pages[0]

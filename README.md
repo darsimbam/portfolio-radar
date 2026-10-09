@@ -27,7 +27,7 @@ Do not put real passwords or API keys in source control or chat. Locally saved n
 - Company trackers with theses, sample metrics, risks, evidence provenance and change history.
 - Consistent discovery, earnings, deterioration and weekly-review outlines.
 - Local notes and watchlist toggles persisted in `data/user_state.json`.
-- Responsive desktop/mobile interface.
+- Responsive desktop/mobile interface with a high-contrast dark radar theme and scan-inspired brand styling.
 - A tested metric-change calculation exposed as a backend research tool.
 - Manual, per-company OpenAI analysis of the supplied tracker data when locally configured.
 - Opt-in local scheduler: once daily at 09:00 local time, analyzing saved-watchlist companies only.
